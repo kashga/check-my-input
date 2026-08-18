@@ -12,6 +12,7 @@ type View = "keyboard" | "typing" | "mouse";
 type Layout = "full" | "tkl" | "60";
 type KeyDef = { code: string; label: string; width?: number; mac?: string; win?: string };
 type LogItem = { id: number; time: string; type: string; detail: string };
+type DeviceInfo = { label: string; platform: string; input: string };
 
 const rows: KeyDef[][] = [
   [
@@ -50,6 +51,35 @@ const rows: KeyDef[][] = [
     { code: "ContextMenu", label: "Menu", width: 1.35 }, { code: "ControlRight", label: "Ctrl", width: 1.35 },
     { code: "ArrowLeft", label: "←" }, { code: "ArrowDown", label: "↓" }, { code: "ArrowRight", label: "→" },
   ],
+];
+
+const macRows: KeyDef[][] = rows.map((row, rowIndex) => {
+  if (rowIndex === 0) {
+    const functionLabels: Record<string, string> = {
+      F1: "F1 · ☀−", F2: "F2 · ☀+", F3: "F3 · Mission", F4: "F4 · Search",
+      F5: "F5 · Mic", F6: "F6 · Focus", F7: "F7 · ◀◀", F8: "F8 · ▶Ⅱ",
+      F9: "F9 · ▶▶", F10: "F10 · Mute", F11: "F11 · Vol−", F12: "F12 · Vol+",
+    };
+    return row.map((key) => ({ ...key, mac: functionLabels[key.code] ?? key.mac }));
+  }
+  const labels: Record<string, string> = {
+    Backspace: "delete ⌫", Enter: "return ↩", CapsLock: "caps lock ⇪",
+    ShiftLeft: "shift ⇧", ShiftRight: "shift ⇧", ControlLeft: "control ⌃",
+    ControlRight: "control ⌃", AltLeft: "option ⌥", AltRight: "option ⌥",
+    MetaLeft: "command ⌘", MetaRight: "command ⌘", Delete: "delete ⌦",
+  };
+  return row.map((key) => ({ ...key, mac: labels[key.code] ?? key.mac }));
+});
+
+macRows[5] = [
+  { code: "ControlLeft", label: "", mac: "control ⌃", width: 1.45 },
+  { code: "AltLeft", label: "", mac: "option ⌥", width: 1.45 },
+  { code: "MetaLeft", label: "", mac: "command ⌘", width: 1.75 },
+  { code: "Space", label: "", width: 6.2 },
+  { code: "MetaRight", label: "", mac: "command ⌘", width: 1.75 },
+  { code: "AltRight", label: "", mac: "option ⌥", width: 1.45 },
+  { code: "ArrowLeft", label: "←" }, { code: "ArrowDown", label: "↓" },
+  { code: "ArrowRight", label: "→" },
 ];
 
 const numpadRows: KeyDef[][] = [
@@ -94,6 +124,7 @@ function Keycap({ item, os, pressed, passed }: { item: KeyDef; os: OS; pressed: 
 
 export default function Home() {
   const [os, setOs] = useState<OS>("mac");
+  const [device, setDevice] = useState<DeviceInfo>({ label: "Detecting device…", platform: "Browser check", input: "—" });
   const [view, setView] = useState<View>("keyboard");
   const [layout, setLayout] = useState<Layout>("full");
   const [pressed, setPressed] = useState<Set<string>>(new Set());
@@ -123,6 +154,29 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const logId = useRef(0);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const nav = navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } };
+      const platform = nav.userAgentData?.platform || navigator.platform || "Unknown platform";
+      const agent = navigator.userAgent;
+      const isMac = /Mac|iPhone|iPad|iPod/i.test(platform) || /Macintosh|iPhone|iPad|iPod/i.test(agent);
+      const isWindows = /Win/i.test(platform) || /Windows/i.test(agent);
+      if (isMac) setOs("mac");
+      else if (isWindows) setOs("windows");
+
+      const coarse = window.matchMedia("(pointer: coarse)").matches;
+      const hover = window.matchMedia("(hover: hover)").matches;
+      const touchPoints = navigator.maxTouchPoints || 0;
+      const mobile = nav.userAgentData?.mobile ?? /Android|iPhone|Mobile/i.test(agent);
+      const tablet = !mobile && touchPoints > 0 && coarse;
+      const label = mobile ? "Mobile device" : tablet ? "Tablet" : "Desktop or laptop";
+      const input = coarse && !hover ? "Touch input" : touchPoints > 0 ? "Mouse/trackpad + touch" : "Mouse or trackpad";
+      const detectedPlatform = isMac ? (/iPhone|iPad|iPod/i.test(platform + agent) ? "iOS / iPadOS" : "macOS") : isWindows ? "Windows" : platform;
+      setDevice({ label, platform: detectedPlatform, input });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   const addLog = useCallback((type: string, detail: string) => {
     const time = new Date().toLocaleTimeString([], { hour12: false, fractionalSecondDigits: 3 } as Intl.DateTimeFormatOptions);
@@ -210,17 +264,19 @@ export default function Home() {
     lastPoint.current = { x, y };
   };
 
-  const visibleRows = useMemo(() => rows.map((row, rowIndex) =>
+  const visibleRows = useMemo(() => (os === "mac" ? macRows : rows).map((row, rowIndex) =>
     row.filter((key) => {
       if (layout === "full") return true;
       if (layout === "tkl") return true;
       if (rowIndex === 0) return false;
       return !["Insert", "Home", "PageUp", "Delete", "End", "PageDown", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(key.code);
     })
-  ), [layout]);
+  ), [layout, os]);
 
   const filteredGuide = guide.filter((g) => `${g.category} ${g.issue} ${g.solutions.join(" ")}`.toLowerCase().includes(guideQuery.toLowerCase()));
   const totalKeys = visibleRows.flat().length + (layout === "full" ? 20 : 0);
+  const visibleCodes = new Set([...visibleRows.flat(), ...(layout === "full" ? numpadRows.flat() : [])].map((key) => key.code));
+  const testedVisibleKeys = [...passed].filter((code) => visibleCodes.has(code)).length;
   const passage = typingPassages[passageIndex];
   const correctChars = [...typingText].filter((char, index) => char === passage[index]).length;
   const elapsedMinutes = Math.max(1 / 60, (typingDuration - typingTime) / 60);
@@ -262,7 +318,7 @@ export default function Home() {
           <button className={os === "mac" ? "active" : ""} onClick={() => setOs("mac")}><Command size={14} /> macOS</button>
           <button className={os === "windows" ? "active" : ""} onClick={() => setOs("windows")}><span className="win-icon">⊞</span> Windows</button>
         </div>
-        <div className="secure-label"><ShieldCheck size={16} /> Local &amp; secure</div>
+        <div className="secure-label device-summary" title={`${device.label} · ${device.input}`}><ShieldCheck size={16} /><span><b>{device.platform}</b><small>{device.label}</small></span></div>
       </header>
 
       <div className="body-grid">
@@ -293,7 +349,7 @@ export default function Home() {
           {view === "keyboard" ? (
             <>
               <div className="page-heading">
-                <div><div className="eyebrow"><span>01</span> INPUT DIAGNOSTIC</div><h1>Keyboard <em>Test</em></h1><p>Press every key. Each input is mapped by its physical location.</p></div>
+                <div><div className="eyebrow"><span>01</span> INPUT DIAGNOSTIC</div><h1>Keyboard <em>Test</em></h1><p>Press every key. Each input is mapped by its physical location.</p><div className="detected-device"><Activity size={13} /><b>Detected:</b> {device.platform} · {device.label} · {device.input}</div></div>
                 <label className="select-wrap">LAYOUT
                   <select value={layout} onChange={(e) => setLayout(e.target.value as Layout)}>
                     <option value="full">Full-Size (100%)</option><option value="tkl">TKL (80%)</option><option value="60">60%</option>
@@ -311,7 +367,7 @@ export default function Home() {
                   </div>
                   {layout === "full" && <div className="numpad">{numpadRows.map((row, i) => <div className="key-row" key={i}>{row.map((key, j) => <Keycap key={`${key.code}-${i}-${j}`} item={key} os={os} pressed={pressed.has(key.code)} passed={passed.has(key.code)} />)}</div>)}</div>}
                 </div>
-                <div className="progress-row"><span>{passed.size} / {totalKeys} keys tested</span><div className="progress"><i style={{ width: `${Math.min(100, (passed.size / totalKeys) * 100)}%` }} /></div><b>{Math.round(Math.min(100, (passed.size / totalKeys) * 100))}%</b></div>
+                <div className="progress-row"><span>{testedVisibleKeys} / {totalKeys} keys tested</span><div className="progress"><i style={{ width: `${Math.min(100, (testedVisibleKeys / totalKeys) * 100)}%` }} /></div><b>{Math.round(Math.min(100, (testedVisibleKeys / totalKeys) * 100))}%</b></div>
               </div>
               <div className="telemetry">
                 <div className="telemetry-title"><div><Gauge size={18} /><span><b>LIVE TELEMETRY</b><small>Real-time input data</small></span></div><button onClick={resetKeyboard}><RotateCcw size={15} /> Reset Test</button></div>
@@ -450,3 +506,4 @@ export default function Home() {
     </main>
   );
 }
+
