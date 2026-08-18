@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, ArrowRight, Bug, Check, ChevronDown, ChevronRight, CircleHelp,
-  Command, Crosshair, Gauge, Keyboard, Menu, Mouse, RotateCcw, Search, ShieldCheck,
-  Target, Timer, X, Zap,
+  Command, Crosshair, Gauge, Grid3X3, Hand, Keyboard, Menu, Mouse, RotateCcw,
+  Search, ShieldCheck, Smartphone, Target, Timer, Vibrate, X, Zap,
 } from "lucide-react";
 
 type OS = "mac" | "windows";
-type View = "keyboard" | "typing" | "mouse";
+type View = "keyboard" | "typing" | "mouse" | "touch";
 type Layout = "full" | "tkl" | "60";
 type KeyDef = { code: string; label: string; width?: number; mac?: string; win?: string };
 type LogItem = { id: number; time: string; type: string; detail: string };
@@ -108,6 +108,8 @@ const targetPositions = [
   [5, 86], [92, 30], [51, 17], [27, 60],
 ];
 
+const mobileTypingPassage = "Smooth taps and accurate typing make every mobile interaction feel effortless.";
+
 function Keycap({ item, os, pressed, passed }: { item: KeyDef; os: OS; pressed: boolean; passed: boolean }) {
   const label = os === "mac" ? item.mac ?? item.label : item.win ?? item.label;
   return (
@@ -150,10 +152,26 @@ export default function Home() {
   const [targetHits, setTargetHits] = useState(0);
   const [targetMisses, setTargetMisses] = useState(0);
   const [targetTimes, setTargetTimes] = useState<number[]>([]);
+  const [touchCells, setTouchCells] = useState<Set<number>>(new Set());
+  const [maxTouches, setMaxTouches] = useState(0);
+  const [touchGesture, setTouchGesture] = useState("Waiting for touch");
+  const [touchLatency, setTouchLatency] = useState<number[]>([]);
+  const [touchSmoothness, setTouchSmoothness] = useState("Not tested");
+  const [pinchScale, setPinchScale] = useState(1);
+  const [orientation, setOrientation] = useState("Detecting…");
+  const [vibrationResult, setVibrationResult] = useState("Not tested");
+  const [mobileTyping, setMobileTyping] = useState("");
+  const [mobileTypingStarted, setMobileTypingStarted] = useState(0);
+  const [mobileTypingElapsed, setMobileTypingElapsed] = useState(1);
   const targetShownAt = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const logId = useRef(0);
+  const activeTouches = useRef(new Map<number, { x: number; y: number; started: number }>());
+  const lastTapAt = useRef(0);
+  const initialPinchDistance = useRef(0);
+  const movementIntervals = useRef<number[]>([]);
+  const lastMoveAt = useRef(0);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -174,8 +192,21 @@ export default function Home() {
       const input = coarse && !hover ? "Touch input" : touchPoints > 0 ? "Mouse/trackpad + touch" : "Mouse or trackpad";
       const detectedPlatform = isMac ? (/iPhone|iPad|iPod/i.test(platform + agent) ? "iOS / iPadOS" : "macOS") : isWindows ? "Windows" : platform;
       setDevice({ label, platform: detectedPlatform, input });
+      if (mobile || tablet) setView("touch");
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const updateOrientation = () => setOrientation(window.innerWidth > window.innerHeight ? "Landscape" : "Portrait");
+    const frame = window.requestAnimationFrame(updateOrientation);
+    window.addEventListener("orientationchange", updateOrientation);
+    window.addEventListener("resize", updateOrientation);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("orientationchange", updateOrientation);
+      window.removeEventListener("resize", updateOrientation);
+    };
   }, []);
 
   const addLog = useCallback((type: string, detail: string) => {
@@ -304,6 +335,73 @@ export default function Home() {
   const targetAttempts = targetHits + targetMisses;
   const targetAccuracy = targetAttempts ? Math.round((targetHits / targetAttempts) * 100) : 100;
   const averageTargetTime = targetTimes.length ? Math.round(targetTimes.reduce((a, b) => a + b, 0) / targetTimes.length) : 0;
+  const touchAccuracy = Math.round((touchCells.size / 60) * 100);
+  const averageTouchLatency = touchLatency.length ? Math.round(touchLatency.reduce((a, b) => a + b, 0) / touchLatency.length) : 0;
+  const mobileCorrect = [...mobileTyping].filter((char, index) => char === mobileTypingPassage[index]).length;
+  const mobileElapsed = Math.max(mobileTypingElapsed / 60000, 1 / 60);
+  const mobileWpm = Math.round((mobileCorrect / 5) / mobileElapsed);
+  const mobileAccuracy = mobileTyping.length ? Math.round((mobileCorrect / mobileTyping.length) * 100) : 100;
+
+  const markTouchCell = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const column = Math.max(0, Math.min(5, Math.floor(((e.clientX - rect.left) / rect.width) * 6)));
+    const row = Math.max(0, Math.min(9, Math.floor(((e.clientY - rect.top) / rect.height) * 10)));
+    setTouchCells((old) => new Set(old).add(row * 6 + column));
+  };
+  const touchStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === "mouse") return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    activeTouches.current.set(e.pointerId, { x: e.clientX, y: e.clientY, started: performance.now() });
+    setMaxTouches((value) => Math.max(value, activeTouches.current.size));
+    setTouchLatency((old) => [...old, Math.max(0, performance.now() - e.timeStamp)].slice(-30));
+    if (activeTouches.current.size === 2) {
+      const [a, b] = [...activeTouches.current.values()];
+      initialPinchDistance.current = Math.hypot(a.x - b.x, a.y - b.y);
+      setTouchGesture("Two-finger pinch detected");
+    }
+    markTouchCell(e);
+  };
+  const touchMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = activeTouches.current.get(e.pointerId);
+    if (!start) return;
+    activeTouches.current.set(e.pointerId, { ...start, x: e.clientX, y: e.clientY });
+    markTouchCell(e);
+    const now = performance.now();
+    if (lastMoveAt.current) movementIntervals.current.push(now - lastMoveAt.current);
+    lastMoveAt.current = now;
+    const samples = movementIntervals.current.slice(-40);
+    if (samples.length > 5) {
+      const average = samples.reduce((a, b) => a + b, 0) / samples.length;
+      const deviation = Math.sqrt(samples.reduce((sum, value) => sum + (value - average) ** 2, 0) / samples.length);
+      setTouchSmoothness(deviation < 12 ? "Smooth" : deviation < 25 ? "Moderate" : "Irregular");
+    }
+    if (activeTouches.current.size >= 2 && initialPinchDistance.current) {
+      const [a, b] = [...activeTouches.current.values()];
+      setPinchScale(Math.hypot(a.x - b.x, a.y - b.y) / initialPinchDistance.current);
+    }
+  };
+  const touchEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const start = activeTouches.current.get(e.pointerId);
+    if (!start) return;
+    const elapsed = performance.now() - start.started;
+    const distance = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+    if (distance > 50) setTouchGesture(`Swipe · ${Math.round(distance)} px`);
+    else if (elapsed >= 600) setTouchGesture(`Long press · ${Math.round(elapsed)} ms`);
+    else if (performance.now() - lastTapAt.current < 350) { setTouchGesture("Double tap"); lastTapAt.current = 0; }
+    else { setTouchGesture(`Tap · ${Math.round(elapsed)} ms`); lastTapAt.current = performance.now(); }
+    activeTouches.current.delete(e.pointerId);
+    if (activeTouches.current.size < 2) initialPinchDistance.current = 0;
+  };
+  const resetTouch = () => {
+    setTouchCells(new Set()); setMaxTouches(0); setTouchGesture("Waiting for touch"); setTouchLatency([]);
+    setTouchSmoothness("Not tested"); setPinchScale(1); setVibrationResult("Not tested");
+    setMobileTyping(""); setMobileTypingStarted(0); setMobileTypingElapsed(1); movementIntervals.current = [];
+  };
+  const testVibration = () => {
+    if (!("vibrate" in navigator)) { setVibrationResult("Not supported"); return; }
+    const started = navigator.vibrate([120, 60, 120]);
+    setVibrationResult(started ? "Signal sent" : "Unavailable");
+  };
 
   return (
     <main className="app-shell">
@@ -333,6 +431,9 @@ export default function Home() {
             </button>
             <button className={view === "mouse" ? "nav-item active" : "nav-item"} onClick={() => { setView("mouse"); setMobileNav(false); }}>
               <Mouse size={18} /> Mouse Test <ChevronRight size={15} />
+            </button>
+            <button className={view === "touch" ? "nav-item active" : "nav-item"} onClick={() => { setView("touch"); setMobileNav(false); }}>
+              <Smartphone size={18} /> Touch Test <ChevronRight size={15} />
             </button>
             <p className="nav-label spaced">DIAGNOSTIC TOOLS</p>
             <button className="nav-item" onClick={() => setConsoleOpen(true)}><Bug size={18} /> Open Debug Console <ChevronRight size={15} /></button>
@@ -424,7 +525,7 @@ export default function Home() {
                 <a href="https://www.typing.com/blog/what-is-words-per-minute/" target="_blank" rel="noreferrer">WPM convention <ArrowRight size={13} /></a>
               </div>
             </>
-          ) : (
+          ) : view === "mouse" ? (
             <>
               <div className="page-heading">
                 <div><div className="eyebrow"><span>03</span> POINTER DIAGNOSTIC</div><h1>Mouse <em>Test</em></h1><p>Click every button, scroll, trace the sensor, and run a guided benchmark.</p></div>
@@ -477,6 +578,71 @@ export default function Home() {
                     <a href="https://www.iso.org/standard/54106.html" target="_blank" rel="noreferrer">Based on ISO 9241-411 pointing evaluation <ArrowRight size={12} /></a>
                   </div>
                 </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="page-heading touch-heading">
+                <div><div className="eyebrow"><span>04</span> MOBILE DIAGNOSTIC</div><h1>Touch <em>Test</em></h1><p>Test the touchscreen, gestures, virtual keyboard, orientation, and haptics.</p><div className="detected-device"><Smartphone size={13} /><b>{device.label}</b> · {device.platform} · {device.input}</div></div>
+                <button className="reset-head" onClick={resetTouch}><RotateCcw size={15} /> Reset Test</button>
+              </div>
+              <div className="touch-dashboard">
+                <section className="touch-card touch-map-card">
+                  <div className="card-label"><Grid3X3 size={17} /> TOUCH ACCURACY &amp; DEAD-ZONE GRID <span>{touchCells.size}/60 CELLS</span></div>
+                  <div
+                    className="touch-surface"
+                    onPointerDown={touchStart}
+                    onPointerMove={touchMove}
+                    onPointerUp={touchEnd}
+                    onPointerCancel={touchEnd}
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    {[...Array(60)].map((_, index) => <i key={index} className={touchCells.has(index) ? "tested" : ""} />)}
+                    <div className="touch-instruction"><Hand size={25} /><b>Drag across every cell</b><span>Use two or more fingers to test multi-touch and pinch.</span></div>
+                  </div>
+                  <div className="touch-progress"><span>SCREEN COVERAGE</span><div className="progress"><i style={{ width: `${touchAccuracy}%` }} /></div><b>{touchAccuracy}%</b></div>
+                </section>
+
+                <section className="touch-card gesture-card">
+                  <div className="card-label"><Activity size={17} /> LIVE TOUCH TELEMETRY</div>
+                  <div className="touch-metrics">
+                    <div><label>LAST GESTURE</label><strong>{touchGesture}</strong><small>Tap, double-tap, hold, or swipe</small></div>
+                    <div><label>MAX MULTI-TOUCH</label><strong>{maxTouches}</strong><small>simultaneous contacts</small></div>
+                    <div><label>PINCH SCALE</label><strong>{pinchScale.toFixed(2)}×</strong><small>two-finger distance</small></div>
+                    <div><label>EVENT LATENCY</label><strong>{averageTouchLatency || "—"}</strong><small>{averageTouchLatency ? "ms average" : "touch to measure"}</small></div>
+                    <div><label>MOVEMENT</label><strong>{touchSmoothness}</strong><small>event timing consistency</small></div>
+                    <div><label>ORIENTATION</label><strong>{orientation}</strong><small>rotate the device to test</small></div>
+                  </div>
+                </section>
+
+                <section className="touch-card mobile-type-card">
+                  <div className="card-label"><Keyboard size={17} /> VIRTUAL KEYBOARD TEST</div>
+                  <p>{mobileTypingPassage}</p>
+                  <textarea
+                    value={mobileTyping}
+                    inputMode="text"
+                    autoCapitalize="sentences"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder="Tap here and type the sentence above…"
+                    onPaste={(e) => e.preventDefault()}
+                    onChange={(e) => {
+                      const now = performance.now();
+                      if (!mobileTypingStarted) setMobileTypingStarted(now);
+                      else setMobileTypingElapsed(now - mobileTypingStarted);
+                      setMobileTyping(e.target.value.slice(0, mobileTypingPassage.length));
+                    }}
+                  />
+                  <div className="mobile-type-results"><span><b>{mobileWpm}</b> WPM</span><span><b>{mobileAccuracy}%</b> accuracy</span><span><b>{mobileCorrect}</b> correct</span></div>
+                </section>
+
+                <section className="touch-card phone-tools-card">
+                  <div className="card-label"><Vibrate size={17} /> PHONE CAPABILITIES</div>
+                  <div className="phone-tool-row"><div><Smartphone size={20} /><span><b>Orientation response</b><small>Current position: {orientation}</small></span></div><strong className="supported">LIVE</strong></div>
+                  <div className="phone-tool-row"><div><Vibrate size={20} /><span><b>Vibration test</b><small>Requires browser and hardware support</small></span></div><button onClick={testVibration}>Test vibration</button></div>
+                  <p className={`vibration-status ${vibrationResult === "Not supported" ? "unsupported" : ""}`}>{vibrationResult}</p>
+                </section>
+                <p className="touch-privacy"><ShieldCheck size={14} /> All touch measurements stay on this device. Browser limitations may affect vibration and reported latency.</p>
               </div>
             </>
           )}
