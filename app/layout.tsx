@@ -7,10 +7,11 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   title: "OmniTest — Keyboard & Mouse Diagnostics",
-  description: "A private, real-time diagnostic suite for testing every key, click, scroll, and mouse movement.",
+  description: "A private, real-time diagnostic suite for testing keyboards, mice, touchscreens, gestures, typing, and mobile device input.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return <html lang="en"><body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body></html>;
 }
+
