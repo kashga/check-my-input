@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, ArrowRight, Bug, Check, ChevronDown, ChevronRight, CircleHelp,
-  Command, Crosshair, Gauge, Grid3X3, Hand, Keyboard, Menu, Mouse, RotateCcw,
-  Search, ShieldCheck, Smartphone, Target, Timer, Vibrate, X, Zap,
+  Command, Crosshair, Gauge, Grid3X3, Hand, Keyboard, Maximize2, Menu, Minimize2,
+  Mouse, RotateCcw, Search, ShieldCheck, Smartphone, Target, Timer, Vibrate, X, Zap,
 } from "lucide-react";
 
 type OS = "mac" | "windows";
@@ -166,6 +166,7 @@ export default function Home() {
   const [mobileTyping, setMobileTyping] = useState("");
   const [mobileTypingStarted, setMobileTypingStarted] = useState(0);
   const [mobileTypingElapsed, setMobileTypingElapsed] = useState(1);
+  const [screenTestFullscreen, setScreenTestFullscreen] = useState(false);
   const targetShownAt = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPoint = useRef<{ x: number; y: number } | null>(null);
@@ -175,6 +176,7 @@ export default function Home() {
   const initialPinchDistance = useRef(0);
   const movementIntervals = useRef<number[]>([]);
   const lastMoveAt = useRef(0);
+  const screenTestRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -205,6 +207,14 @@ export default function Home() {
       if (mobile || tablet) { setTouchDevice(true); setView("touch"); }
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setScreenTestFullscreen(false);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
 
   useEffect(() => {
@@ -414,6 +424,16 @@ export default function Home() {
     const started = navigator.vibrate([120, 60, 120]);
     setVibrationResult(started ? "Signal sent" : "Unavailable");
   };
+  const enterScreenTest = () => {
+    setScreenTestFullscreen(true);
+    screenTestRef.current?.requestFullscreen?.().catch(() => {
+      // iPhone Safari does not expose element fullscreen; the CSS viewport mode remains active.
+    });
+  };
+  const exitScreenTest = () => {
+    if (document.fullscreenElement) document.exitFullscreen().finally(() => setScreenTestFullscreen(false));
+    else setScreenTestFullscreen(false);
+  };
 
   return (
     <main className={`app-shell ${touchDevice ? "touch-device-app" : ""}`}>
@@ -605,7 +625,8 @@ export default function Home() {
               <div className="touch-dashboard">
                 <section className="touch-card touch-map-card">
                   <div className="card-label"><Grid3X3 size={17} /> TOUCH ACCURACY &amp; DEAD-ZONE GRID <span>{touchCells.size}/60 CELLS</span></div>
-                  <div className={`device-frame ${tabletProfile ? "tablet-frame" : "phone-frame"} ${deviceProfile}`}>
+                  <button className="fullscreen-test-cta" onClick={enterScreenTest}><Maximize2 size={18} /><span><b>START FULL-SCREEN SCREEN TEST</b><small>Best way to find missed areas and touchscreen dead zones</small></span><strong>START</strong></button>
+                  <div ref={screenTestRef} className={`device-frame ${tabletProfile ? "tablet-frame" : "phone-frame"} ${deviceProfile} ${screenTestFullscreen ? "screen-test-active" : ""}`}>
                     <div className="device-speaker" /><div className="device-camera" />
                     <div
                       className="touch-surface"
@@ -617,6 +638,7 @@ export default function Home() {
                     >
                       {[...Array(60)].map((_, index) => <i key={index} className={touchCells.has(index) ? "tested" : ""} />)}
                       <div className="screen-status"><span>9:41</span><b>{profileLabel}</b><span>●●●</span></div>
+                      {screenTestFullscreen && <button className="exit-screen-test" type="button" onPointerDown={(e) => e.stopPropagation()} onClick={exitScreenTest}><Minimize2 size={16} /> Exit full screen</button>}
                       <div className="touch-instruction"><Hand size={25} /><b>Drag across every cell</b><span>Use two or more fingers to test multi-touch and pinch.</span></div>
                     </div>
                   </div>
