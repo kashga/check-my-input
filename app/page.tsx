@@ -13,6 +13,7 @@ type Layout = "full" | "tkl" | "60";
 type KeyDef = { code: string; label: string; width?: number; mac?: string; win?: string };
 type LogItem = { id: number; time: string; type: string; detail: string };
 type DeviceInfo = { label: string; platform: string; input: string };
+type DeviceProfile = "iphone" | "android-phone" | "ipad" | "android-tablet";
 
 const rows: KeyDef[][] = [
   [
@@ -127,6 +128,8 @@ function Keycap({ item, os, pressed, passed }: { item: KeyDef; os: OS; pressed: 
 export default function Home() {
   const [os, setOs] = useState<OS>("mac");
   const [device, setDevice] = useState<DeviceInfo>({ label: "Detecting device…", platform: "Browser check", input: "—" });
+  const [touchDevice, setTouchDevice] = useState(false);
+  const [deviceProfile, setDeviceProfile] = useState<DeviceProfile>("iphone");
   const [view, setView] = useState<View>("keyboard");
   const [layout, setLayout] = useState<Layout>("full");
   const [pressed, setPressed] = useState<Set<string>>(new Set());
@@ -188,11 +191,18 @@ export default function Home() {
       const touchPoints = navigator.maxTouchPoints || 0;
       const mobile = nav.userAgentData?.mobile ?? /Android|iPhone|Mobile/i.test(agent);
       const tablet = !mobile && touchPoints > 0 && coarse;
+      const isIpad = /iPad/i.test(agent) || (/MacIntel/i.test(platform) && touchPoints > 1);
+      const isIphone = /iPhone|iPod/i.test(agent);
+      const isAndroid = /Android/i.test(agent);
       const label = mobile ? "Mobile device" : tablet ? "Tablet" : "Desktop or laptop";
       const input = coarse && !hover ? "Touch input" : touchPoints > 0 ? "Mouse/trackpad + touch" : "Mouse or trackpad";
       const detectedPlatform = isMac ? (/iPhone|iPad|iPod/i.test(platform + agent) ? "iOS / iPadOS" : "macOS") : isWindows ? "Windows" : platform;
       setDevice({ label, platform: detectedPlatform, input });
-      if (mobile || tablet) setView("touch");
+      if (isIpad) setDeviceProfile("ipad");
+      else if (isIphone) setDeviceProfile("iphone");
+      else if (isAndroid && mobile) setDeviceProfile("android-phone");
+      else if (isAndroid) setDeviceProfile("android-tablet");
+      if (mobile || tablet) { setTouchDevice(true); setView("touch"); }
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
@@ -341,6 +351,8 @@ export default function Home() {
   const mobileElapsed = Math.max(mobileTypingElapsed / 60000, 1 / 60);
   const mobileWpm = Math.round((mobileCorrect / 5) / mobileElapsed);
   const mobileAccuracy = mobileTyping.length ? Math.round((mobileCorrect / mobileTyping.length) * 100) : 100;
+  const tabletProfile = deviceProfile === "ipad" || deviceProfile === "android-tablet";
+  const profileLabel = { iphone: "iPhone", "android-phone": "Android phone", ipad: "iPad", "android-tablet": "Android tablet" }[deviceProfile];
 
   const markTouchCell = (e: React.PointerEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -404,23 +416,23 @@ export default function Home() {
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${touchDevice ? "touch-device-app" : ""}`}>
       <header className="topbar">
         <div className="brand">
-          <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu"><Menu size={20} /></button>
+          {!touchDevice && <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu"><Menu size={20} /></button>}
           <div className="brand-mark"><Activity size={20} /></div>
           <span>OMNI<span>TEST</span></span>
           <div className="status-pill"><i /> SYSTEM READY</div>
         </div>
-        <div className="os-toggle" role="group" aria-label="Operating system">
+        {!touchDevice && <div className="os-toggle" role="group" aria-label="Operating system">
           <button className={os === "mac" ? "active" : ""} onClick={() => setOs("mac")}><Command size={14} /> macOS</button>
           <button className={os === "windows" ? "active" : ""} onClick={() => setOs("windows")}><span className="win-icon">⊞</span> Windows</button>
-        </div>
+        </div>}
         <div className="secure-label device-summary" title={`${device.label} · ${device.input}`}><ShieldCheck size={16} /><span><b>{device.platform}</b><small>{device.label}</small></span></div>
       </header>
 
-      <div className="body-grid">
-        <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
+      <div className={`body-grid ${touchDevice ? "touch-only-grid" : ""}`}>
+        {!touchDevice && <aside className={`sidebar ${mobileNav ? "open" : ""}`}>
           <nav>
             <p className="nav-label">TEST TOOLS</p>
             <button className={view === "keyboard" ? "nav-item active" : "nav-item"} onClick={() => { setView("keyboard"); setMobileNav(false); }}>
@@ -444,7 +456,7 @@ export default function Home() {
             <button onClick={() => setGuideOpen(!guideOpen)}>Troubleshooting Guide <ArrowRight size={15} /></button>
           </div>
           <div className="privacy"><ShieldCheck size={16} /><span><b>100% private testing</b><small>No input data leaves your browser.</small></span></div>
-        </aside>
+        </aside>}
 
         <section className="workspace">
           {view === "keyboard" ? (
@@ -583,22 +595,30 @@ export default function Home() {
           ) : (
             <>
               <div className="page-heading touch-heading">
-                <div><div className="eyebrow"><span>04</span> MOBILE DIAGNOSTIC</div><h1>Touch <em>Test</em></h1><p>Test the touchscreen, gestures, virtual keyboard, orientation, and haptics.</p><div className="detected-device"><Smartphone size={13} /><b>{device.label}</b> · {device.platform} · {device.input}</div></div>
-                <button className="reset-head" onClick={resetTouch}><RotateCcw size={15} /> Reset Test</button>
+                <div><div className="eyebrow"><span>04</span> MOBILE DIAGNOSTIC</div><h1>Touch <em>Screen Test</em></h1><p>Test the touchscreen, gestures, virtual keyboard, orientation, and haptics.</p><div className="detected-device"><Smartphone size={13} /><b>{device.label}</b> · {device.platform} · {device.input}</div></div>
+                <div className="touch-heading-actions"><label className="select-wrap">DEVICE
+                  <select value={deviceProfile} onChange={(e) => setDeviceProfile(e.target.value as DeviceProfile)}>
+                    <option value="iphone">iPhone</option><option value="android-phone">Android phone</option><option value="ipad">iPad</option><option value="android-tablet">Android tablet</option>
+                  </select><ChevronDown size={15} />
+                </label><button className="reset-head" onClick={resetTouch}><RotateCcw size={15} /> Reset Test</button></div>
               </div>
               <div className="touch-dashboard">
                 <section className="touch-card touch-map-card">
                   <div className="card-label"><Grid3X3 size={17} /> TOUCH ACCURACY &amp; DEAD-ZONE GRID <span>{touchCells.size}/60 CELLS</span></div>
-                  <div
-                    className="touch-surface"
-                    onPointerDown={touchStart}
-                    onPointerMove={touchMove}
-                    onPointerUp={touchEnd}
-                    onPointerCancel={touchEnd}
-                    onContextMenu={(e) => e.preventDefault()}
-                  >
-                    {[...Array(60)].map((_, index) => <i key={index} className={touchCells.has(index) ? "tested" : ""} />)}
-                    <div className="touch-instruction"><Hand size={25} /><b>Drag across every cell</b><span>Use two or more fingers to test multi-touch and pinch.</span></div>
+                  <div className={`device-frame ${tabletProfile ? "tablet-frame" : "phone-frame"} ${deviceProfile}`}>
+                    <div className="device-speaker" /><div className="device-camera" />
+                    <div
+                      className="touch-surface"
+                      onPointerDown={touchStart}
+                      onPointerMove={touchMove}
+                      onPointerUp={touchEnd}
+                      onPointerCancel={touchEnd}
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      {[...Array(60)].map((_, index) => <i key={index} className={touchCells.has(index) ? "tested" : ""} />)}
+                      <div className="screen-status"><span>9:41</span><b>{profileLabel}</b><span>●●●</span></div>
+                      <div className="touch-instruction"><Hand size={25} /><b>Drag across every cell</b><span>Use two or more fingers to test multi-touch and pinch.</span></div>
+                    </div>
                   </div>
                   <div className="touch-progress"><span>SCREEN COVERAGE</span><div className="progress"><i style={{ width: `${touchAccuracy}%` }} /></div><b>{touchAccuracy}%</b></div>
                 </section>
@@ -662,7 +682,7 @@ export default function Home() {
         </aside>
       </div>
 
-      {consoleOpen && <div className="modal-backdrop" onMouseDown={() => setConsoleOpen(false)}>
+      {consoleOpen && !touchDevice && <div className="modal-backdrop" onMouseDown={() => setConsoleOpen(false)}>
         <div className="console-modal" onMouseDown={(e) => e.stopPropagation()}>
           <div className="console-head"><div><Bug size={18} /><span><b>RAW EVENT LOG</b><small>{logs.length} events captured</small></span></div><button onClick={() => setConsoleOpen(false)}><X size={18} /></button></div>
           <div className="console-actions"><span><i /> Listening for device events</span><button onClick={() => setLogs([])}>Clear log</button></div>
